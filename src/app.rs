@@ -1246,7 +1246,7 @@ impl App {
     }
 
     pub fn subscription(&self) -> Subscription<AppMessage> {
-        let keys = listen_with(|event, status, _| match event {
+        let keys = listen_with(|event, status, window_id| match event {
             Event::Keyboard(keyboard_event) => match keyboard_event {
                 iced::keyboard::Event::ModifiersChanged(modifiers) => {
                     Some(AppMessage::ModifiersChanged(modifiers))
@@ -1318,6 +1318,9 @@ impl App {
                 },
                 _ => None,
             },
+            Event::Window(iced::window::Event::Opened { .. }) => {
+                Some(AppMessage::FoundWindowId(Some(window_id)))
+            }
             _ => None,
         });
 

@@ -32,12 +32,11 @@ impl PageLayout {
         mut pages: mupdf::document::PageIter<'_>,
         translation: Vector<f32>, // In document space
         scale: f32,
-        fractional_scale: f32,
         viewport: Size<f32>,
     ) -> Result<Vec<Rect<f32>>> {
         let mut out: Vec<Rect<f32>> = vec![];
         let vsize: Vector<_> = viewport.into();
-        let effective_scale = scale * fractional_scale;
+        let effective_scale = scale;
         match self {
             PageLayout::SinglePage => {
                 let mut pos: Vector<f32> = Vector::zero();
@@ -180,7 +179,6 @@ impl PageLayout {
         &self,
         doc: &Document,
         scale: f32,
-        fractional_scale: f32,
         page_idx: usize,
         viewport: Size<f32>,
     ) -> Result<Vector<f32>> {
@@ -188,14 +186,13 @@ impl PageLayout {
             doc.pages()?,
             Vector::zero(),
             scale,
-            fractional_scale,
             viewport,
         )?;
         let rect = rects
             .get(page_idx)
             .ok_or(anyhow!("Page index {page_idx} out of bounds"))?;
         let viewport_center = Vector::new(viewport.width, viewport.height).scaled(0.5);
-        Ok((rect.center() - viewport_center).scaled(1.0 / (scale * fractional_scale)))
+        Ok((rect.center() - viewport_center).scaled(1.0 / scale))
     }
 
     pub fn current_page_index(
@@ -204,7 +201,7 @@ impl PageLayout {
         translation: Vector<f32>,
         viewport: Size<f32>,
     ) -> Result<usize> {
-        let rects = self.pages_rects(doc.pages()?, -translation, 1.0, 1.0, viewport)?;
+        let rects = self.pages_rects(doc.pages()?, -translation, 1.0, viewport)?;
         let mut closest = 0;
         let viewport: Vector<_> = viewport.into();
         if rects.is_empty() {
@@ -226,7 +223,7 @@ impl PageLayout {
         translation: Vector<f32>,
         viewport: Size<f32>,
     ) -> Result<Rect<f32>> {
-        let rects = self.pages_rects(doc.pages()?, translation, 1.0, 1.0, viewport)?;
+        let rects = self.pages_rects(doc.pages()?, translation, 1.0, viewport)?;
         let idx = self.current_page_index(doc, translation, viewport)?;
         Ok(rects[idx])
     }
@@ -237,7 +234,7 @@ impl PageLayout {
         translation: Vector<f32>,
         viewport: Size<f32>,
     ) -> Result<Rect<f32>> {
-        let rects = self.pages_rects(doc.pages()?, translation, 1.0, 1.0, viewport)?;
+        let rects = self.pages_rects(doc.pages()?, translation, 1.0, viewport)?;
         let mut idx = self.current_page_index(doc, translation, viewport)?;
         idx = (match self {
             PageLayout::SinglePage => idx.saturating_sub(1),
@@ -255,7 +252,7 @@ impl PageLayout {
         translation: Vector<f32>,
         viewport: Size<f32>,
     ) -> Result<Rect<f32>> {
-        let rects = self.pages_rects(doc.pages()?, translation, 1.0, 1.0, viewport)?;
+        let rects = self.pages_rects(doc.pages()?, translation, 1.0, viewport)?;
         let mut idx = self.current_page_index(doc, translation, viewport)?;
         idx = (match self {
             PageLayout::SinglePage => idx + 1,
@@ -285,11 +282,10 @@ mod tests {
         let layout = PageLayout::SinglePage;
         let viewport = Size::new(800.0, 600.0);
         let scale = 1.0;
-        let fractional_scale = 1.0;
 
-        let t0 = layout.translation_for_page(&doc, scale, fractional_scale, 0, viewport)?;
-        let t1 = layout.translation_for_page(&doc, scale, fractional_scale, 1, viewport)?;
-        let t2 = layout.translation_for_page(&doc, scale, fractional_scale, 2, viewport)?;
+        let t0 = layout.translation_for_page(&doc, scale, 0, viewport)?;
+        let t1 = layout.translation_for_page(&doc, scale, 1, viewport)?;
+        let t2 = layout.translation_for_page(&doc, scale, 2, viewport)?;
 
         // Page 0 should need minimal/no translation to be centered
         // (it's already centered when translation=0)
@@ -316,7 +312,7 @@ mod tests {
 
         // Verify that applying the NEGATED translation to pages_rects centers the page
         // (view() passes -self.translation to pages_rects)
-        let rects = layout.pages_rects(doc.pages()?, -t1, scale, fractional_scale, viewport)?;
+        let rects = layout.pages_rects(doc.pages()?, -t1, scale, viewport)?;
         let viewport_center = Vector::new(viewport.width, viewport.height).scaled(0.5);
         let page1_center = rects[1].center();
         let diff = (page1_center - viewport_center).norm_squared();

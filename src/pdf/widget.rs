@@ -677,7 +677,6 @@ impl PdfViewer {
                     && let Ok(translation) = self.layout.translation_for_page(
                         &self.doc,
                         self.scale,
-                        self.fractional_scaling,
                         idx,
                         *self.viewport.borrow(),
                     )
@@ -715,11 +714,10 @@ impl PdfViewer {
                         if viewport.width > 0.0 && viewport.height > 0.0 {
                             let scale_x = viewport.width / page_width;
                             let scale_y = viewport.height / page_height;
-                            self.scale = scale_x.min(scale_y) / self.fractional_scaling;
+                            self.scale = scale_x.min(scale_y);
                             if let Ok(translation) = self.layout.translation_for_page(
                                 &self.doc,
                                 self.scale,
-                                self.fractional_scaling,
                                 page_idx,
                                 viewport,
                             ) {
@@ -741,7 +739,7 @@ impl PdfViewer {
                     MouseInteraction::Panning => {
                         out = iced::Task::done(PdfMessage::Move(
                             (old_local - new_local)
-                                .scaled(1.0 / (self.scale * self.fractional_scaling)),
+                                .scaled(1.0 / self.scale),
                         ))
                     }
                     MouseInteraction::Selecting => {
@@ -898,28 +896,28 @@ impl PdfViewer {
                 let vp = self.viewport.borrow();
                 out = iced::Task::done(PdfMessage::Move(Vector::new(
                     0.0,
-                    -vp.height / (self.scale * self.fractional_scaling),
+                    -vp.height / self.scale,
                 )));
             }
             PdfMessage::PageDown => {
                 let vp = self.viewport.borrow();
                 out = iced::Task::done(PdfMessage::Move(Vector::new(
                     0.0,
-                    vp.height / (self.scale * self.fractional_scaling),
+                    vp.height / self.scale,
                 )));
             }
             PdfMessage::HalfPageUp => {
                 let vp = self.viewport.borrow();
                 out = iced::Task::done(PdfMessage::Move(Vector::new(
                     0.0,
-                    -vp.height / (self.scale * self.fractional_scaling * 2.0),
+                    -vp.height / (self.scale * 2.0),
                 )));
             }
             PdfMessage::HalfPageDown => {
                 let vp = self.viewport.borrow();
                 out = iced::Task::done(PdfMessage::Move(Vector::new(
                     0.0,
-                    vp.height / (self.scale * self.fractional_scaling * 2.0),
+                    vp.height / (self.scale * 2.0),
                 )));
             }
             PdfMessage::HighlightSearchResults => {
@@ -935,7 +933,6 @@ impl PdfViewer {
                     if let Ok(base_translation) = self.layout.translation_for_page(
                         &self.doc,
                         self.scale,
-                        self.fractional_scaling,
                         page_idx,
                         *self.viewport.borrow(),
                     ) {
@@ -947,8 +944,7 @@ impl PdfViewer {
                         self.translation.y = base_translation.y + (match_center.y - page_center.y);
                         // Horizontal: adjust minimally from current pan to keep match visible.
                         let viewport = *self.viewport.borrow();
-                        let effective_scale = self.scale * self.fractional_scaling;
-                        let half_viewport = viewport.width / (2.0 * effective_scale);
+                        let half_viewport = viewport.width / (2.0 * self.scale);
                         let lower_bound = match_rect.x1.x - page_center.x - half_viewport;
                         let upper_bound = match_rect.x0.x - page_center.x + half_viewport;
                         if lower_bound > upper_bound {
@@ -1021,7 +1017,6 @@ impl PdfViewer {
                     self.doc.pages().unwrap(),
                     self.translation.scaled(-1.0),
                     self.scale,
-                    self.fractional_scaling,
                     size,
                 )
                 .unwrap();
@@ -1063,8 +1058,8 @@ impl PdfViewer {
 
                     let (key, draw_rect, w, h, matrix, scissor) = if fully_visible {
                         let key = RenderKey::Full(i, effective_scale.to_bits());
-                        let w = rect_ss.width().ceil().max(1.0) as i32;
-                        let h = rect_ss.height().ceil().max(1.0) as i32;
+                        let w = (rect_ss.width() * self.fractional_scaling).ceil().max(1.0) as i32;
+                        let h = (rect_ss.height() * self.fractional_scaling).ceil().max(1.0) as i32;
                         let matrix =
                             Matrix::new(effective_scale, 0.0, 0.0, effective_scale, 0.0, 0.0);
                         let scissor =
@@ -1072,11 +1067,11 @@ impl PdfViewer {
                         (key, rect_ss, w, h, matrix, scissor)
                     } else {
                         let vis = rect_ss.intersect(&viewport_rect);
-                        let vw = vis.width().ceil().max(1.0) as i32;
-                        let vh = vis.height().ceil().max(1.0) as i32;
+                        let vw = (vis.width() * self.fractional_scaling).ceil().max(1.0) as i32;
+                        let vh = (vis.height() * self.fractional_scaling).ceil().max(1.0) as i32;
 
-                        let render_offset_x = rect_ss.x0.x - vis.x0.x;
-                        let render_offset_y = rect_ss.x0.y - vis.x0.y;
+                        let render_offset_x = (rect_ss.x0.x - vis.x0.x) * self.fractional_scaling;
+                        let render_offset_y = (rect_ss.x0.y - vis.x0.y) * self.fractional_scaling;
 
                         let key = RenderKey::Partial(i, effective_scale.to_bits(), vw, vh);
 
@@ -1409,7 +1404,6 @@ impl PdfViewer {
     pub fn extract_text_from_rect(&self, screen_rect: Rect<f32>) -> String {
         use mupdf::TextPageFlags;
 
-        let effective_scale = self.scale * self.fractional_scaling;
         let viewport = *self.viewport.borrow();
 
         let Ok(pages) = self.doc.pages() else {
@@ -1419,7 +1413,6 @@ impl PdfViewer {
             pages,
             self.translation.scaled(-1.0),
             self.scale,
-            self.fractional_scaling,
             viewport,
         ) else {
             return String::new();
@@ -1436,10 +1429,10 @@ impl PdfViewer {
             let page_bounds = self.display_lists[i].bounds();
 
             let pdf_rect = mupdf::Rect::new(
-                (intersect.x0.x - page_rect.x0.x) / effective_scale + page_bounds.x0,
-                (intersect.x0.y - page_rect.x0.y) / effective_scale + page_bounds.y0,
-                (intersect.x1.x - page_rect.x0.x) / effective_scale + page_bounds.x0,
-                (intersect.x1.y - page_rect.x0.y) / effective_scale + page_bounds.y0,
+                (intersect.x0.x - page_rect.x0.x) / self.scale + page_bounds.x0,
+                (intersect.x0.y - page_rect.x0.y) / self.scale + page_bounds.y0,
+                (intersect.x1.x - page_rect.x0.x) / self.scale + page_bounds.x0,
+                (intersect.x1.y - page_rect.x0.y) / self.scale + page_bounds.y0,
             );
 
             let Ok(text_page) = self.display_lists[i].to_text_page(TextPageFlags::empty()) else {
@@ -1491,7 +1484,6 @@ impl PdfViewer {
             pages,
             self.translation.scaled(-1.0),
             self.scale,
-            self.fractional_scaling,
             viewport,
         ) else {
             return result;
@@ -1543,7 +1535,6 @@ impl PdfViewer {
             pages,
             self.translation.scaled(-1.0),
             self.scale,
-            self.fractional_scaling,
             viewport,
         ) else {
             return result;
@@ -1597,7 +1588,6 @@ impl PdfViewer {
             pages,
             self.translation.scaled(-1.0),
             self.scale,
-            self.fractional_scaling,
             viewport,
         ) else {
             return result;
@@ -1935,7 +1925,7 @@ mod tests {
         // The scale should be the largest scale that still fits the page.
         let scale_x = viewport.width / page_width;
         let scale_y = viewport.height / page_height;
-        let expected_scale = scale_x.min(scale_y) / viewer.fractional_scaling;
+        let expected_scale = scale_x.min(scale_y);
         assert!(
             (viewer.scale - expected_scale).abs() < 1e-3,
             "Expected scale ~{}, got {}",
@@ -1948,7 +1938,6 @@ mod tests {
             viewer.doc.pages()?,
             -viewer.translation,
             viewer.scale,
-            viewer.fractional_scaling,
             viewport,
         )?;
         let page_rect = rects[page_idx];
